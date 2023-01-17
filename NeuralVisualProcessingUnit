@@ -1,0 +1,340 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Nov 26 14:01:36 2017
+
+@author: Teddy Edmond Benkohen
+"""
+
+import nengo
+from nengo.processes import Piecewise
+from WaveletWrapper import WaveWrap, pywt, plt
+from SignalEncoding import TimeSeries
+from nengo.processes import WhiteNoise
+from nengo.dists import Uniform
+
+class Stimulus:
+    
+    def __init__(self, minTimeSerie, maxTimeSerie):
+        self.minTimeSerie = minTimeSerie
+        self.maxTimeSerie = maxTimeSerie
+        self.stimulusLength = len(self.minTimeSerie)
+        self.piecewiseMinTimeSerie = None # Dictionary containing the minTimeSerie.
+        self.piecewiseMaxTimeSerie = None # Dictionary containing the maxTimeSerie.
+        self.afferentNeuralNet = None # Model of an artificial Afferent Neural Network.
+        self.minStimulus = None
+        self.maxStimulus = None
+        self.minStimulus = None
+        self.maxStimulus = None
+        self.minStimulator = None
+        self.maxStimulator = None
+        self.netStimulator = None
+        self.minStimulusProbe = None
+        self.maxStimulusProbe = None
+        self.minStimulusProbe = None
+        self.maxStimulusProbe = None
+        self.minStimulatoProbe = None
+        self.maxStimulatorProbe = None
+        self.netStimulatorProbe = None
+        self.stimSim = None
+    
+    def list2dict(self, time_series_data):
+        
+        keys = []
+        values = time_series_data
+        
+        for i in range(0, len(time_series_data)):
+            
+            key = int(i)
+            keys.append(key)
+            dictionary = dict(zip(keys, values))
+            return dictionary
+        
+    def create_stimulus(self):
+        
+        self.piecewiseMinTimeSerie = self.list2dict(self.minTimeSerie)
+        self.piecewiseMaxTimeSerie = self.list2dict(self.maxTimeSerie)
+        return  self.piecewiseMinTimeSerie, self.piecewiseMaxTimeSerie
+    
+    def stimulate(self, piecewiseTimeSerie):
+        
+        stimulus = Piecewise(piecewiseTimeSerie)
+        return stimulus
+
+    def create_afferentNeuralNet(self, number_of_neurons = 100):
+    
+        if self.piecewiseMinTimeSerie is None or self.piecewiseMaxTimeSerie is None:
+        
+            self.create_stimulus()
+            self.afferentNeuralNet = nengo.Network(label = 'Afferent Artificial Neural Network')
+        
+        with self.afferentNeuralNet:
+        
+            self.minStimulator = nengo.Ensemble(number_of_neurons, dimensions = 1)
+            self.maxStimulator = nengo.Ensemble(number_of_neurons, dimensions = 1)
+            self.netStimulator = nengo.Ensemble(number_of_neurons * 2, dimensions = 1)
+            self.minStimulus = nengo.Node(self.stimulate(self.piecewiseMinTimeSerie))
+            self.maxStimulus = nengo.Node(self.stimulate(self.piecewiseMaxTimeSerie))
+            nengo.Connection(self.minStimulus, self.minStimulator)
+            nengo.Connection(self.maxStimulus, self.maxStimulator)
+            nengo.Connection(self.minStimulator, self.netStimulator)
+            nengo.Connection(self.maxStimulator, self.netStimulator)
+        
+        return self.afferentNeuralNet, self.netStimulator
+    
+    def probe_afferentNeuralNet(self, sampling_time = 0.01):
+        
+        if self.afferentNeuralNet is None:
+            
+            self.create_afferentNeuralNet()
+        
+        with self.afferentNeuralNet:
+            
+            self.minStimulusProbe = nengo.Probe(self.minStimulus, synapse = sampling_time)
+            self.maxStimulusProbe = nengo.Probe(self.maxStimulus, synapse = sampling_time)
+            self.minStimulatorProbe = nengo.Probe(self.minStimulator, synapse = sampling_time)
+            self.maxStimulatorProbe = nengo.Probe(self.maxStimulator, synapse = sampling_time)
+            self.netStimulatorProbe = nengo.Probe(self.netStimulator, synapse = sampling_time)
+        
+        return self.minStimulusProbe, self.maxStimulusProbe, self.minStimulatorProbe, self.maxStimulatorProbe, self.netStimulatorProbe
+    
+    def simulate_afferentNeuralNet(self):
+        
+        if self.minStimulusProbe is None or self.maxStimulusProbe is None or self.minStimulatorProbe is None or self.maxStimulatorProbe is None or self.netStimulatorProbe is None:
+            
+            self.probe_afferentNeuralNet()
+        
+        with nengo.Simulator(self.afferentNeuralNet) as AANNsim:
+            
+            AANNsim.run(self.stimulusLength)
+        
+        # Plotting the physical time serie stimulation of the visual sensory cells.
+        plt.figure()
+        plt.plot(AANNsim.trange(), AANNsim.data[self.minStimulusProbe], 'b', label = "Min input")
+        plt.plot(AANNsim.trange(), AANNsim.data[self.maxStimulusProbe], 'r', label = "Max input")
+        plt.legend()
+        plt.show()
+        
+        # Plotting the physical time serie output of the visual sensory cells.
+        plt.figure()
+        plt.plot(AANNsim.trange(), AANNsim.data[self.minStimulatorProbe], 'b', label = "Max Stimulus output")
+        plt.plot(AANNsim.trange(), AANNsim.data[self.maxStimulatorProbe], 'r', label = "Max Stimulus output")
+        plt.legend()
+        plt.show()
+        
+        # Plotting the net physical output of the afferent Leaky-Integrate-Fire Neurons.
+        plt.plot(AANNsim.trange(), AANNsim.data[self.netStimulatorProbe][:, 0], 'b', label = "AANN output")
+        plt.legend()
+        plt.show()
+
+class Vpu(Stimulus): # V.P.U. stands for Visual Processing Unit.
+    
+    def __init__(self, stimulusTrend, stimulusHdetail, stimulusVdetail, stimulusDdetail):
+        
+        self.stimLengthList = [stimulusTrend.stimulusLength, stimulusHdetail.stimulusLength, stimulusVdetail.stimulusLength, stimulusDdetail.stimulusLength]
+        self.maxStimulusLength = max(self.stimLengthList)
+        self.AANNTrend, self.AANNTout = stimulusTrend.create_afferentNeuralNet()
+        self.AANNHdetail, self.AANNHout = stimulusHdetail.create_afferentNeuralNet()
+        self.AANNVdetail, self.AANNVout = stimulusVdetail.create_afferentNeuralNet()
+        self.AANNDdetail, self.AANNDout = stimulusDdetail.create_afferentNeuralNet()
+        self.VpuModel = None
+        self.LorentzAttractor = None
+        self.MT = None
+        self.InterMTVAB = None
+        self.VAB = None
+        self.LorentzAttractorProbe = None
+        self.MTProbe = None
+        self.InterMTVABProbe = None
+        self.VABProbe = None
+    
+    def create_Vpu(self, tau = 0.1, sigma = 10, beta = 8.0 / 3, rho = 28, number_of_neurons = 100, weight = 0.1, syn = 0.01):
+        
+        self.VpuModel = nengo.Network(label = 'Visual Processing Unit')
+        
+        # Introducing Lorentz attractor chaotic equations. 
+        def feedback(x):
+            
+            dx0 = -sigma * x[0] + sigma * x[1]
+            dx1 = -x[0] * x[2] - x[1]
+            dx2 = x[0]* x[1]- beta * (x[2] + rho) - rho
+            return [dx0 * tau + x[0], dx1 * tau + x[1], dx2 * tau + x[2]]
+
+        
+        with self.VpuModel:
+            
+            # Creating the Lorentz Attractor allows us to model rapid eye movement as
+            #a chaotic process for detail inspection in images.
+            self.LorentzAttractor = nengo.Ensemble(20 * number_of_neurons, 3, radius = 60)
+            # Creating the second part of the Vpu.
+            # The eye’s motion area (MT).
+            self.MT = nengo.Ensemble(number_of_neurons, dimensions = 1, noise = WhiteNoise(dist = Uniform(-0.3, 0.3)))
+            # The area carrying the signal from the MT to the Visual Area of the Brain
+            # (InterMTVAB).
+            self.InterMTVAB = nengo.Ensemble(2 * number_of_neurons, dimensions = 1, noise = WhiteNoise(dist = Uniform(-0.3, 0.3)))
+            # The Visual Area of the Brain (VAB).
+            self.VAB = nengo.Ensemble(number_of_neurons, dimensions = 1, noise = WhiteNoise(dist = Uniform(-0.3, 0.3)))
+            # Linking image details to the Lorentz Attractor.
+            
+            # Horizontal details.
+            with self.AANNHdetail:
+                
+                nengo.Connection(self.AANNHout, self.LorentzAttractor[0])
+            
+            # Vertical details
+            with self.AANNVdetail:
+                
+                nengo.Connection(self.AANNVout, self.LorentzAttractor[1])
+            
+            # Diagonal details.
+            
+            with self.AANNDdetail:
+                
+                nengo.Connection(self.AANNDout, self.LorentzAttractor[2])
+            
+            # Introducting chaotic feedback in the Lorentz Attractor.
+            nengo.Connection(self.LorentzAttractor, self.LorentzAttractor, function = feedback, synapse = tau)
+            
+            # Connecting the Lorentz Attractor to MT.
+            nengo.Connection(self.LorentzAttractor[0], self.MT, synapse = syn)
+            nengo.Connection(self.LorentzAttractor[1], self.MT, synapse = syn)
+            nengo.Connection(self.LorentzAttractor[2], self.MT, synapse = syn)
+            
+            # Connecting the trend to MT.
+            
+            with self.AANNTrend:
+                
+                nengo.Connection(self.AANNTout, self.MT)
+            
+            # Connecting MT ensemble to InterMTVAB ensemble.
+            nengo.Connection(self.MT, self.InterMTVAB, transform = weight, synapse= 10 * syn)
+            # Connecting InterMTVAB ensemble to itself.
+            nengo.Connection(self.InterMTVAB, self.InterMTVAB, synapse = 10 * syn)
+            # Connecting InterMTVAB ensemble to output.
+            nengo.Connection(self.InterMTVAB, self.VAB, synapse = syn)
+            
+            return self.VpuModel
+        
+        def probe_Vpu(self, sampling_time = 0.01):
+            
+            if self.VpuModel is None:
+                
+                self.create_Vpu()
+            
+            tau = 10 * sampling_time
+            
+            with self.VpuModel:
+                
+                self.LorentzAttractorProbe = nengo.Probe(self.LorentzAttractor, synapse=tau)
+                self.MTProbe = nengo.Probe(self.MT, synapse = sampling_time)
+                self.InterMTVABProbe = nengo.Probe(self.InterMTVAB, synapse = sampling_time)
+                self.VABProbe = nengo.Probe(self.InterMTVAB, synapse = sampling_time)
+                return self.LorentzAttractorProbe, self.MTProbe, self.InterMTVABProbe, self.VABProbe
+        
+        def simulate_Vpu(self):
+            
+            if self.LorentzAttractorProbe is None or self.MTProbe is None or self.InterMTVABProbe is None or self.VABProbe is None:
+                
+                self.probe_Vpu()
+            
+            with nengo.Simulator(self.VpuModel) as Vpu_sim:
+                
+                Vpu_sim.run(self.maxStimulusLength)
+            
+            # 3D plot of Chaotic Data.
+            ax = plt.figure().add_subplot(111, projection = '3d')
+            ax.plot(*Vpu_sim.data[self.LorentzAttractorProbe].T)
+            
+            # 2D Lorentz attractor.
+            plt.figure()
+            plt.plot(Vpu_sim.trange(), Vpu_sim.data[self.LorentzAttractorProbe])
+            plt.show()
+            
+            # Plotting the time serie virtual motion output resulting from chaotic movement.
+            plt.figure()
+            plt.plot(Vpu_sim.trange(), Vpu_sim.data[self.MTProbe], 'b', label = "MT Response")
+            plt.legend()
+            plt.show()
+            
+            # Plotting the output of virtual sensory cells.
+            plt.figure()
+            plt.plot(Vpu_sim.trange(), Vpu_sim.data[self.InterMTVABProbe], 'b', label = "Inter MT-VAB response")
+            plt.legend()
+            plt.show()
+            
+            # Plotting the output of the afferent Leaky-Integrate-Fire Neurons.
+            plt.figure()
+            plt.plot(Vpu_sim.trange(), Vpu_sim.data[self.VABProbe], 'b', label = "Vpu Response")
+            plt.legend()
+            plt.show()
+
+
+if __name__ == "__main__":
+    
+    """Simulating the neural response to the aero image."""
+    # Loading and inspecting the data then finding the time Series (same code as in file	SignalEncoding.py).
+    data = pywt.data.aero()
+    wave = WaveWrap()
+    coefs = wave.twod_multilevel_wavelet_decomposition(data)
+    ts1 = TimeSeries()
+    ts2 = TimeSeries()
+    ts3 = TimeSeries()
+    ts4 = TimeSeries()
+    ts1max = ts1.find_scaledMaxTimeSerie(coefs[0])
+    ts2max = ts2.find_scaledMaxTimeSerie(coefs[1][0])
+    ts3max = ts3.find_scaledMaxTimeSerie(coefs[1][1])
+    ts4max = ts4.find_scaledMaxTimeSerie(coefs[1][2])
+    ts1min = ts1.find_scaledMinTimeSerie(coefs[0])
+    ts2min = ts2.find_scaledMinTimeSerie(coefs[1][0])
+    ts3min = ts3.find_scaledMinTimeSerie(coefs[1][1])
+    ts4min = ts4.find_scaledMinTimeSerie(coefs[1][2])
+    
+    # Create the stimuli.
+    stim1 = Stimulus(ts1min, ts1max)
+    stim2 = Stimulus(ts2min, ts2max)
+    stim3 = Stimulus(ts3min, ts3max)
+    stim4 = Stimulus(ts4min, ts4max)
+    
+    # Simulate the incoming stimuli from the image.
+    stim1.simulate_afferentNeuralNet()
+    stim2.simulate_afferentNeuralNet()
+    stim3.simulate_afferentNeuralNet()
+    stim4.simulate_afferentNeuralNet()
+    
+    # Simulate the Vpu's response to the stimuli.
+    vpu = Vpu(stim1, stim2, stim3, stim4)
+    vpu.simulate_Vpu()
+    
+    """Simulating the neural response to the camera image."""
+    
+    # Loading and inspecting the data then finding the time Series (same code as in file	SignalEncoding.py).
+    #data = pywt.data.camera()
+    #wave = WaveWrap()
+    #coefs = wave.twod_multilevel_wavelet_decomposition(data)
+    #ts1 = TimeSeries()
+    #ts2 = TimeSeries()
+    #ts3 = TimeSeries()
+    #ts4 = TimeSeries()
+    #ts1max = ts1.find_scaledMaxTimeSerie(coefs[0])
+    #ts2max = ts2.find_scaledMaxTimeSerie(coefs[1][0])
+    #ts3max = ts3.find_scaledMaxTimeSerie(coefs[1][1])
+    #ts4max = ts4.find_scaledMaxTimeSerie(coefs[1][2])
+    #ts1min = ts1.find_scaledMinTimeSerie(coefs[0])
+    #ts2min = ts2.find_scaledMinTimeSerie(coefs[1][0])
+    #ts3min = ts3.find_scaledMinTimeSerie(coefs[1][1])
+    #ts4min = ts4.find_scaledMinTimeSerie(coefs[1][2])
+    
+    # Create the stimuli.
+    #stim1 = Stimulus(ts1min, ts1max)
+    #stim2 = Stimulus(ts2min, ts2max)
+    #stim3 = Stimulus(ts3min, ts3max)
+    #stim4 = Stimulus(ts4min, ts4max)
+    
+    # Simulate the incoming stimuli from the image.
+    #stim1.simulate_afferentNeuralNet()
+    #stim2.simulate_afferentNeuralNet()
+    #stim3.simulate_afferentNeuralNet()
+    #stim4.simulate_afferentNeuralNet()
+    
+    # Simulate the Vpu's response to the stimuli.
+    #vpu = Vpu(stim1, stim2, stim3, stim4)
+    #vpu.simulate_Vpu()
